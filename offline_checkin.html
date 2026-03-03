@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Offline Group Check-In</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #f6f7fb; color: #111; }
+    header { padding: 14px 16px; background: white; position: sticky; top: 0; border-bottom: 1px solid #e6e7ee; z-index: 5; }
+    h1 { margin: 0; font-size: 18px; }
+    .wrap { padding: 12px 16px; max-width: 1040px; margin: 0 auto; }
+    .card { background: white; border: 1px solid #e6e7ee; border-radius: 14px; padding: 12px; margin: 12px 0; box-shadow: 0 1px 0 rgba(0,0,0,.02); }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    label { font-size: 12px; color: #444; display: block; margin-bottom: 6px; }
+    input, textarea, button {
+      font: inherit; border-radius: 12px; border: 1px solid #d9dbe7; padding: 10px 12px; background: white;
+    }
+    input[type="search"] { width: min(560px, 100%); }
+    textarea { width: 100%; min-height: 120px; }
+    button { cursor: pointer; border: 1px solid #cfd2e3; background: #fff; }
+    button.primary { background: #111; color: #fff; border-color: #111; }
+    button.danger { background: #b00020; color: #fff; border-color: #b00020; }
+    button:active { transform: translateY(1px); }
+    .muted { color: #666; font-size: 13px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .student {
+      display: grid; grid-template-columns: 1fr; gap: 10px;
+      padding: 12px; border-radius: 14px; border: 1px solid #e6e7ee; background: #fff;
+    }
+    .topline { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .name { font-weight: 800; font-size: 16px; }
+    .meta { font-size: 13px; color: #555; margin-top: 2px; line-height: 1.35; }
+    .checks { display: flex; gap: 8px; flex-wrap: wrap; }
+    .checkBtn { padding: 10px 12px; border-radius: 12px; min-width: 160px; text-align: left; }
+    .on { background: #e8fff1; border-color: #66d19e; }
+    .off { background: #fff; }
+    .tiny { font-size: 12px; color: #666; margin-top: 6px; }
+    .right { margin-left: auto; }
+    .toast {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: #111; color: #fff; padding: 10px 12px; border-radius: 999px; opacity: 0; pointer-events: none;
+      transition: opacity .2s ease;
+    }
+    .toast.show { opacity: 1; }
+    details summary { cursor: pointer; font-weight: 700; }
+    code { background: #f0f1f6; padding: 2px 6px; border-radius: 8px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #e6e7ee; background:#fff; font-size:12px; color:#444; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Offline Group Check-In</h1>
+    <span class="muted right">Auto-saves on this device • Works offline ✅</span>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- Controls -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Search roster</label>
+        <input id="search" type="search" placeholder="Search name / NetID / group / leader / room…" />
+      </div>
+      <div class="right">
+        <label>&nbsp;</label>
+        <button id="exportBtn" class="primary">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <button id="clearMorningBtn">Clear Morning</button>
+      <button id="clearAfternoonBtn">Clear Afternoon</button>
+      <button id="clearEveningBtn">Clear Evening</button>
+      <button id="resetAllBtn" class="danger">Reset everything</button>
+      <span class="muted right" id="lastSaved"></span>
+    </div>
+
+    <!-- NEW: "Ready to read" roster block -->
+    <details style="margin-top:12px;" open>
+      <summary>Roster (ready to read)</summary>
+      <p class="muted">
+        This is the roster currently stored on <b>this device</b>. It’s pre-loaded with dummy students so you can test.
+        When you append your real list, it will be ready to use immediately.
+      </p>
+      <div class="row">
+        <button id="fillDummyBtn">Reload dummy roster</button>
+        <span class="muted">NetID is the unique key (same NetID = update fields).</span>
+      </div>
+    </details>
+
+    <!-- Append section -->
+    <details style="margin-top:12px;">
+      <summary>Append roster (paste your list here)</summary>
+      <p class="muted">
+        Paste lines in this format (comma-separated):<br/>
+        <code>Name, NetID, Group Name, Group Leader, Room Number</code><br/>
+        Example: <code>Ada Lovelace, al1234, Falcon 1, Samira, A-203</code>
+      </p>
+      <textarea id="appendBox" placeholder="Ada Lovelace, al1234, Falcon 1, Samira, A-203&#10;Alan Turing, at5678, Falcon 1, Samira, A-204"></textarea>
+      <div class="row">
+        <button id="appendBtn" class="primary">Append to roster</button>
+        <button id="replaceBtn">Replace roster with pasted list</button>
+      </div>
+      <p class="tiny">
+        You can paste as many lines as you want. If you paste someone already in the roster (same NetID), their
+        group/leader/room/name will be updated.
+      </p>
+    </details>
+  </div>
+
+  <!-- Roster list -->
+  <div class="card">
+    <div class="row">
+      <span class="muted" id="counts"></span>
+      <span class="right muted" id="deviceNote"><span class="badge">Device-local</span> data</span>
+    </div>
+    <div class="grid" id="studentGrid"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Saved</div>
+
+<script>
+(() => {
+  const LS_KEY = "offline_group_checkin_v2_room";
+  const CHECKS = ["Morning", "Afternoon", "Evening"];
+
+  const el = (id) => document.getElementById(id);
+  const search = el("search");
+  const studentGrid = el("studentGrid");
+  const counts = el("counts");
+  const lastSaved = el("lastSaved");
+  const appendBox = el("appendBox");
+  const toast = el("toast");
+
+  function dummyRoster() {
+    return [
+      { name:"Ada Lovelace",  netid:"al1234", group:"Falcon 1", leader:"Samira", room:"A-203" },
+      { name:"Alan Turing",   netid:"at5678", group:"Falcon 1", leader:"Samira", room:"A-204" },
+      { name:"Grace Hopper",  netid:"gh9012", group:"Orion 2",  leader:"Khaled", room:"B-115" },
+      { name:"Katherine Johnson", netid:"kj3456", group:"Orion 2", leader:"Khaled", room:"B-116" }
+    ];
+  }
+
+  const defaultState = () => ({
+    students: [],
+    checkins: { Morning: {}, Afternoon: {}, Evening: {} },
+    updatedAt: null
+  });
+
+  let state = loadState();
+
+  // If brand new on this device, seed with dummy data
+  if (!state.students.length) {
+    state.students = dummyRoster();
+    saveState("Dummy roster loaded");
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (!raw) return defaultState();
+      const parsed = JSON.parse(raw);
+      const base = defaultState();
+      return {
+        ...base,
+        ...parsed,
+        checkins: {
+          ...base.checkins,
+          ...(parsed.checkins || {}),
+          Morning: { ...(base.checkins.Morning), ...((parsed.checkins||{}).Morning || {}) },
+          Afternoon:{ ...(base.checkins.Afternoon),...((parsed.checkins||{}).Afternoon || {}) },
+          Evening: { ...(base.checkins.Evening), ...((parsed.checkins||{}).Evening || {}) },
+        }
+      };
+    } catch (e) {
+      return defaultState();
+    }
+  }
+
+  function saveState(msg="Saved ✅") {
+    state.updatedAt = new Date().toISOString();
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+    lastSaved.textContent = "Last saved: " + new Date().toLocaleString();
+    showToast(msg);
+  }
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 900);
+  }
+
+  function normalize(s) {
+    return (s || "").toString().toLowerCase().trim();
+  }
+
+  function escapeHtml(str) {
+    return (str ?? "").toString()
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  // Accept comma-separated. If your list is tab-separated, you can paste and it will still usually work
+  // if you replace tabs with commas first.
+  function parseRosterLines(text) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const out = [];
+    for (const line of lines) {
+      const parts = line.split(",").map(p => p.trim());
+      if (parts.length < 2) continue;
+
+      const name  = parts[0] || "";
+      const netid = (parts[1] || "").toLowerCase();
+      const group = parts[2] || "";
+      const leader = parts[3] || "";
+      const room = parts.slice(4).join(",").trim(); // tolerate commas in room labels if needed
+
+      if (!name || !netid) continue;
+      out.push({ name, netid, group, leader, room });
+    }
+    return out;
+  }
+
+  function upsertStudents(newStudents, mode /* "append" | "replace" */) {
+    if (mode === "replace") state.students = [];
+
+    const byNetId = new Map(state.students.map(s => [s.netid, s]));
+    for (const s of newStudents) {
+      if (byNetId.has(s.netid)) {
+        const cur = byNetId.get(s.netid);
+        cur.name = s.name;
+        cur.group = s.group;
+        cur.leader = s.leader;
+        cur.room = s.room;
+      } else {
+        state.students.push(s);
+        byNetId.set(s.netid, s);
+      }
+    }
+
+    state.students.sort((a,b) =>
+      (a.group||"").localeCompare(b.group||"") ||
+      (a.leader||"").localeCompare(b.leader||"") ||
+      (a.room||"").localeCompare(b.room||"") ||
+      (a.name||"").localeCompare(b.name||"")
+    );
+  }
+
+  function isChecked(checkName, netid) {
+    return Boolean(state.checkins[checkName] && state.checkins[checkName][netid]);
+  }
+
+  function toggleCheck(checkName, netid) {
+    if (!state.checkins[checkName]) state.checkins[checkName] = {};
+    if (state.checkins[checkName][netid]) {
+      delete state.checkins[checkName][netid];
+      saveState(`${checkName}: undone`);
+    } else {
+      state.checkins[checkName][netid] = new Date().toISOString();
+      saveState(`${checkName}: checked ✅`);
+    }
+    render();
+  }
+
+  function render() {
+    const q = normalize(search.value);
+    let filtered = state.students;
+    if (q) {
+      filtered = state.students.filter(s => {
+        const hay = normalize([s.name, s.netid, s.group, s.leader, s.room].join(" "));
+        return hay.includes(q);
+      });
+    }
+
+    const m = Object.keys(state.checkins.Morning || {}).length;
+    const a = Object.keys(state.checkins.Afternoon || {}).length;
+    const e = Object.keys(state.checkins.Evening || {}).length;
+
+    counts.textContent =
+      `${filtered.length} shown • ${state.students.length} total • ` +
+      `Morning: ${m} • Afternoon: ${a} • Evening: ${e}`;
+
+    studentGrid.innerHTML = "";
+    for (const s of filtered) {
+      const card = document.createElement("div");
+      card.className = "student";
+
+      const header = document.createElement("div");
+      header.className = "topline";
+      header.innerHTML = `
+        <div class="name">${escapeHtml(s.name)}</div>
+        <div class="muted">NetID: ${escapeHtml(s.netid)}</div>
+      `;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.innerHTML = `
+        Group: <b>${escapeHtml(s.group || "—")}</b> •
+        Leader: <b>${escapeHtml(s.leader || "—")}</b> •
+        Room: <b>${escapeHtml(s.room || "—")}</b>
+      `;
+
+      const checks = document.createElement("div");
+      checks.className = "checks";
+
+      for (const checkName of CHECKS) {
+        const btn = document.createElement("button");
+        const checked = isChecked(checkName, s.netid);
+        const ts = (state.checkins[checkName] || {})[s.netid];
+
+        btn.className = "checkBtn " + (checked ? "on" : "off");
+        btn.innerHTML = checked
+          ? `${checkName} ✅<div class="tiny">${new Date(ts).toLocaleTimeString()}</div>`
+          : `${checkName} ⏳<div class="tiny">Tap to check in</div>`;
+        btn.onclick = () => toggleCheck(checkName, s.netid);
+
+        checks.appendChild(btn);
+      }
+
+      card.appendChild(header);
+      card.appendChild(meta);
+      card.appendChild(checks);
+      studentGrid.appendChild(card);
+    }
+
+    if (state.updatedAt) {
+      lastSaved.textContent = "Last saved: " + new Date(state.updatedAt).toLocaleString();
+    }
+  }
+
+  function exportCSV() {
+    const headers = [
+      "Name","NetID","Group Name","Group Leader","Room Number",
+      "Morning Timestamp","Afternoon Timestamp","Evening Timestamp"
+    ];
+    const rows = [headers];
+
+    for (const s of state.students) {
+      rows.push([
+        s.name,
+        s.netid,
+        s.group || "",
+        s.leader || "",
+        s.room || "",
+        (state.checkins.Morning || {})[s.netid] || "",
+        (state.checkins.Afternoon || {})[s.netid] || "",
+        (state.checkins.Evening || {})[s.netid] || ""
+      ]);
+    }
+
+    const csv = rows.map(r => r.map(csvCell).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `group_checkin_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function csvCell(v) {
+    const s = (v ?? "").toString();
+    if (/[",\n]/.test(s)) return `"${s.replaceAll('"', '""')}"`;
+    return s;
+  }
+
+  // Wire up UI
+  el("exportBtn").onclick = exportCSV;
+
+  el("clearMorningBtn").onclick = () => {
+    if (!confirm("Clear ALL Morning check-ins?")) return;
+    state.checkins.Morning = {};
+    saveState("Morning cleared");
+    render();
+  };
+  el("clearAfternoonBtn").onclick = () => {
+    if (!confirm("Clear ALL Afternoon check-ins?")) return;
+    state.checkins.Afternoon = {};
+    saveState("Afternoon cleared");
+    render();
+  };
+  el("clearEveningBtn").onclick = () => {
+    if (!confirm("Clear ALL Evening check-ins?")) return;
+    state.checkins.Evening = {};
+    saveState("Evening cleared");
+    render();
+  };
+
+  el("resetAllBtn").onclick = () => {
+    if (!confirm("Reset EVERYTHING (students + all check-ins) on this device?")) return;
+    localStorage.removeItem(LS_KEY);
+    state = defaultState();
+    // reseed dummy so it stays “ready to read”
+    state.students = dummyRoster();
+    saveState("Reset + dummy roster loaded");
+    render();
+  };
+
+  el("appendBtn").onclick = () => {
+    const parsed = parseRosterLines(appendBox.value);
+    if (!parsed.length) return alert("No valid rows found.");
+    upsertStudents(parsed, "append");
+    saveState("Roster appended");
+    render();
+  };
+
+  el("replaceBtn").onclick = () => {
+    const parsed = parseRosterLines(appendBox.value);
+    if (!parsed.length) return alert("No valid rows found.");
+    if (!confirm("Replace the roster on this device with the pasted list?")) return;
+    upsertStudents(parsed, "replace"); 
+    saveState("Roster replaced");
+    render();
+  };
+
+  el("fillDummyBtn").onclick = () => {
+    if (!confirm("Reload dummy roster? This will replace the roster list (check-ins stay stored, but only dummy students will show).")) return;
+    upsertStudents(dummyRoster(), "replace");
+    saveState("Dummy roster reloaded");
+    render();
+  };
+
+  search.oninput = render;
+
+  // First render
+  render();
+})();
+</script>
+</body>
+</html>
