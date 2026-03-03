@@ -3,9 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#111111">
-  <title>CW3 Offline Check-In</title>
+  <title>Offline Group Check-In</title>
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; background: #f6f7fb; color: #111; }
@@ -15,7 +13,7 @@
     .card { background: white; border: 1px solid #e6e7ee; border-radius: 14px; padding: 12px; margin: 12px 0; box-shadow: 0 1px 0 rgba(0,0,0,.02); }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     label { font-size: 12px; color: #444; display: block; margin-bottom: 6px; }
-    input, textarea, button {
+    input, textarea, button, select {
       font: inherit; border-radius: 12px; border: 1px solid #d9dbe7; padding: 10px 12px; background: white;
     }
     input[type="search"] { width: min(560px, 100%); }
@@ -72,6 +70,17 @@
       </div>
     </div>
 
+    <!-- NEW: Group filter -->
+    <div class="row" style="margin-top:10px;">
+      <div>
+        <label>Filter by group</label>
+        <select id="groupFilter">
+          <option value="">All groups</option>
+        </select>
+      </div>
+      <span class="muted">Filter applies to the roster and Copy Missed.</span>
+    </div>
+
     <div class="row" style="margin-top:10px;">
       <button id="clearMorningBtn">Clear Morning</button>
       <button id="clearAfternoonBtn">Clear Afternoon</button>
@@ -80,7 +89,25 @@
       <span class="muted right" id="lastSaved"></span>
     </div>
 
-    <!-- NEW: "Ready to read" roster block -->
+    <div class="row" style="margin-top:10px;">
+      <div>
+        <label>Missed for</label>
+        <select id="missedSel">
+          <option value="Morning">Morning</option>
+          <option value="Afternoon">Afternoon</option>
+          <option value="Evening">Evening</option>
+        </select>
+      </div>
+
+      <div>
+        <label>&nbsp;</label>
+        <button id="copyMissedBtn" class="primary">Copy missed list</button>
+      </div>
+
+      <span class="muted" id="copyMissedHint">Copies Name - NetID - Room Number</span>
+    </div>
+
+    <!-- "Ready to read" roster block -->
     <details style="margin-top:12px;" open>
       <summary>Roster (ready to read)</summary>
       <p class="muted">
@@ -132,6 +159,7 @@
 
   const el = (id) => document.getElementById(id);
   const search = el("search");
+  const groupFilter = el("groupFilter");   // NEW
   const studentGrid = el("studentGrid");
   const counts = el("counts");
   const lastSaved = el("lastSaved");
@@ -209,8 +237,76 @@
       .replaceAll("'", "&#039;");
   }
 
-  // Accept comma-separated. If your list is tab-separated, you can paste and it will still usually work
-  // if you replace tabs with commas first.
+  // NEW: Build group filter options from roster
+  function refreshGroupFilterOptions() {
+    if (!groupFilter) return;
+
+    const current = groupFilter.value || "";
+    const groups = Array.from(new Set(
+      state.students.map(s => (s.group || "").trim()).filter(Boolean)
+    )).sort((a,b) => a.localeCompare(b));
+
+    groupFilter.innerHTML = `<option value="">All groups</option>` +
+      groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
+
+    if (groups.includes(current)) {
+      groupFilter.value = current;
+    } else {
+      groupFilter.value = "";
+    }
+  }
+
+  // Copy missed list (Name - NetID - Room Number <br />) — scoped by group filter
+  async function copyMissedList() {
+    const sel = el("missedSel");
+    const checkName = sel ? sel.value : "Morning";
+    const checkedMap = (state.checkins && state.checkins[checkName]) ? state.checkins[checkName] : {};
+
+    // Apply group filter if selected
+    let pool = state.students;
+    const g = groupFilter ? (groupFilter.value || "") : "";
+    if (g) pool = pool.filter(s => (s.group || "").trim() === g);
+
+    const missed = pool.filter(s => !checkedMap[s.netid]);
+
+    if (!missed.length) {
+      showToast(`No missed students for ${checkName}${g ? " ("+g+")" : ""} 🎉`);
+      return;
+    }
+
+    const html = missed
+      .map(s => `${escapeHtml(s.name)} - ${escapeHtml(s.netid)} - ${escapeHtml(s.room || "—")}<br />`)
+      .join("");
+
+    const text = missed
+      .map(s => `${s.name} - ${s.netid} - ${s.room || "—"}`)
+      .join("\n");
+
+    try {
+      if (navigator.clipboard && window.ClipboardItem) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" })
+          })
+        ]);
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+
+      showToast(`Copied ${missed.length} missed (${checkName}) ✅`);
+    } catch (err) {
+      alert("Could not copy to clipboard on this browser.\nTip: Try from Safari (not an in-app browser), or use Export CSV.");
+    }
+  }
+
   function parseRosterLines(text) {
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const out = [];
@@ -222,7 +318,7 @@
       const netid = (parts[1] || "").toLowerCase();
       const group = parts[2] || "";
       const leader = parts[3] || "";
-      const room = parts.slice(4).join(",").trim(); // tolerate commas in room labels if needed
+      const room = parts.slice(4).join(",").trim();
 
       if (!name || !netid) continue;
       out.push({ name, netid, group, leader, room });
@@ -230,7 +326,7 @@
     return out;
   }
 
-  function upsertStudents(newStudents, mode /* "append" | "replace" */) {
+  function upsertStudents(newStudents, mode) {
     if (mode === "replace") state.students = [];
 
     const byNetId = new Map(state.students.map(s => [s.netid, s]));
@@ -273,9 +369,19 @@
 
   function render() {
     const q = normalize(search.value);
+
+    // Start with full roster
     let filtered = state.students;
+
+    // NEW: Apply group filter first
+    const g = groupFilter ? (groupFilter.value || "") : "";
+    if (g) {
+      filtered = filtered.filter(s => (s.group || "").trim() === g);
+    }
+
+    // Existing search filter (applies within group if selected)
     if (q) {
-      filtered = state.students.filter(s => {
+      filtered = filtered.filter(s => {
         const hay = normalize([s.name, s.netid, s.group, s.leader, s.room].join(" "));
         return hay.includes(q);
       });
@@ -287,7 +393,8 @@
 
     counts.textContent =
       `${filtered.length} shown • ${state.students.length} total • ` +
-      `Morning: ${m} • Afternoon: ${a} • Evening: ${e}`;
+      `Morning: ${m} • Afternoon: ${a} • Evening: ${e}` +
+      (g ? ` • Group: ${g}` : "");
 
     studentGrid.innerHTML = "";
     for (const s of filtered) {
@@ -402,9 +509,9 @@
     if (!confirm("Reset EVERYTHING (students + all check-ins) on this device?")) return;
     localStorage.removeItem(LS_KEY);
     state = defaultState();
-    // reseed dummy so it stays “ready to read”
     state.students = dummyRoster();
     saveState("Reset + dummy roster loaded");
+    refreshGroupFilterOptions(); // NEW
     render();
   };
 
@@ -413,6 +520,7 @@
     if (!parsed.length) return alert("No valid rows found.");
     upsertStudents(parsed, "append");
     saveState("Roster appended");
+    refreshGroupFilterOptions(); // NEW
     render();
   };
 
@@ -420,8 +528,9 @@
     const parsed = parseRosterLines(appendBox.value);
     if (!parsed.length) return alert("No valid rows found.");
     if (!confirm("Replace the roster on this device with the pasted list?")) return;
-    upsertStudents(parsed, "replace"); 
+    upsertStudents(parsed, "replace");
     saveState("Roster replaced");
+    refreshGroupFilterOptions(); // NEW
     render();
   };
 
@@ -429,20 +538,23 @@
     if (!confirm("Reload dummy roster? This will replace the roster list (check-ins stay stored, but only dummy students will show).")) return;
     upsertStudents(dummyRoster(), "replace");
     saveState("Dummy roster reloaded");
+    refreshGroupFilterOptions(); // NEW
     render();
   };
 
+  // Safe wiring
+  const copyBtn = el("copyMissedBtn");
+  if (copyBtn) copyBtn.addEventListener("click", copyMissedList);
+
   search.oninput = render;
 
-  // First render
+  // NEW: change group triggers render (safe even if element missing)
+  if (groupFilter) groupFilter.addEventListener("change", render);
+
+  // First load: populate group dropdown then render
+  refreshGroupFilterOptions();
   render();
 })();
-    if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./service-worker.js");
-    });
-  }
 </script>
-  
 </body>
 </html>
